@@ -3,6 +3,9 @@ from __future__ import annotations
 import operator
 import os
 import re
+from langchain_tavily import TavilySearch
+
+
 from datetime import date, timedelta
 from pathlib import Path
 from typing import TypedDict, List, Optional, Literal, Annotated
@@ -11,7 +14,8 @@ from pydantic import BaseModel, Field
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Send
-
+from langchain_tavily import TavilySearch
+from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_community.tools.tavily_search import TavilySearchResults
 
@@ -137,12 +141,11 @@ class State(TypedDict):
 
 
 llm = ChatOllama(
-    model="llama3.1:8b",
+    model="llama3.2:latest",
     base_url="http://localhost:11434",
     temperature=0,
     num_ctx=32768,
 )
-
 
 
 # -----------------------------
@@ -193,22 +196,39 @@ def route_next(state: State) -> str:
 # -----------------------------
 # 4) Research (Tavily) 
 # -----------------------------
+
+
 def _tavily_search(query: str, max_results: int = 5) -> List[dict]:
-    
-    tool = TavilySearchResults(max_results=max_results)
-    results = tool.invoke({"query": query})
+    tool = TavilySearch(max_results=max_results)
+    response = tool.invoke({"query": query})
+
+    # Extract the actual search results.
+    if isinstance(response, dict):
+        results = response.get("results", [])
+    elif isinstance(response, list):
+        results = response
+    else:
+        raise TypeError(
+            f"Unexpected Tavily response type: {type(response).__name__}"
+        )
 
     normalized: List[dict] = []
-    for r in results or []:
-        normalized.append(
-            {
-                "title": r.get("title") or "",
-                "url": r.get("url") or "",
-                "snippet": r.get("content") or r.get("snippet") or "",
-                "published_at": r.get("published_date") or r.get("published_at"),
-                "source": r.get("source"),
-            }
-        )
+
+    for r in results:
+        # Skip unexpected entries rather than crashing.
+        if not isinstance(r, dict):
+            continue
+
+        normalized.append({
+            "title": r.get("title") or "",
+            "url": r.get("url") or "",
+            "snippet": r.get("content") or r.get("snippet") or "",
+            "published_at": (
+                r.get("published_date") or r.get("published_at")
+            ),
+            "source": r.get("source"),
+        })
+
     return normalized
 
 
